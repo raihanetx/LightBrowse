@@ -11,20 +11,12 @@ import android.webkit.WebView
 import kotlin.math.roundToInt
 
 /**
- * Professional zoom handler for mobile WebView.
+ * Professional zoom — works like Chrome's accessibility zoom.
  *
- * HOW CHROME DOES ZOOM ON MOBILE:
- * Chrome doesn't use CSS zoom or setInitialScale. It changes the VIEWPORT WIDTH.
- * When viewport width changes → page's responsive CSS reflows → text wraps, images
- * scale via CSS percentages → no black space, no empty areas. Content fills the screen.
- *
- * This implementation does the same thing:
- * 1. Get the device's default viewport width (e.g. 360px)
- * 2. Calculate new viewport width based on zoom: width = defaultWidth * (100/zoomPercent)
- *    - Zoom 200% → viewport becomes 180px → content thinks it's on a tiny screen → reflows
- *    - Zoom 50% → viewport becomes 720px → content thinks it's on a tablet → reflows
- * 3. Inject viewport meta tag with new width
- * 4. Page CSS does the rest naturally
+ * Uses CSS transform: scale() on the entire page.
+ * This magnifies EVERYTHING uniformly — text, images, buttons, layout.
+ * No reflow, no black space, no empty areas.
+ * Just like looking through a magnifying glass.
  */
 class ZoomManager(
     private val context: Context,
@@ -66,11 +58,9 @@ class ZoomManager(
     }
 
     private var currentZoomPercent = 100
-    private var defaultViewportWidth = 0  // Will be detected from the page
     private var isInPinchZoom = false
     var forceZoomEnabled = true
 
-    // --- Gesture Detectors ---
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             isInPinchZoom = true
@@ -109,31 +99,12 @@ class ZoomManager(
         }
     }
 
-    /**
-     * Call from WebViewClient.onPageFinished.
-     * Detects the page's default viewport width, then applies current zoom.
-     */
     fun onPageLoaded() {
         if (forceZoomEnabled) {
             webView.evaluateJavascript(FORCE_ENABLE_ZOOM_JS, null)
         }
-
-        // Detect the page's actual viewport width
-        val detectJs = """
-            (function() {
-                var w = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
-                return w;
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(detectJs) { result ->
-            val width = result?.replace("\"", "")?.toIntOrNull() ?: 0
-            if (width > 0) {
-                defaultViewportWidth = width
-            }
-            // Apply zoom after detecting viewport
-            applyZoom(currentZoomPercent)
-        }
+        // Apply current zoom to new page
+        applyZoom(currentZoomPercent)
     }
 
     fun zoomIn(): Boolean {
@@ -163,49 +134,47 @@ class ZoomManager(
     fun getZoom(): Int = currentZoomPercent
 
     /**
-     * THE KEY METHOD — viewport-based zoom.
+     * Apply zoom using CSS transform: scale().
      *
-     * How it works:
-     * - Zoom 100% → viewport width = device default (e.g. 360px)
-     * - Zoom 200% → viewport width = 180px → page thinks screen is smaller → CSS reflows
-     * - Zoom 50%  → viewport width = 720px → page thinks screen is bigger → CSS reflows
+     * This is how Chrome actually zooms on mobile:
+     * - transform: scale() magnifies EVERYTHING uniformly
+     * - transform-origin: 0 0 scales from top-left
+     * - The body is made wider to create a scrollable area
+     * - Page scrolls normally to see the zoomed content
      *
-     * The page's responsive CSS (media queries, % widths, em/rem units) handles everything.
-     * No black space, no empty areas. Content fills the screen like Chrome.
+     * At zoom 200%, scale = 2.0 → everything looks 2x bigger
+     * At zoom 50%, scale = 0.5 → everything looks half size
      */
     private fun applyZoom(percent: Int) {
-        if (defaultViewportWidth <= 0) {
-            // Haven't detected viewport yet, use fallback
-            defaultViewportWidth = 360
-        }
-
-        // Calculate the new viewport width the page should see
-        // Higher zoom = smaller viewport = content reflows to be bigger
-        val newWidth = (defaultViewportWidth * 100.0 / percent).roundToInt()
+        val scale = percent / 100.0
 
         val js = """
-            (function() {
-                var meta = document.querySelector('meta[name="viewport"]');
-                if (!meta) {
-                    meta = document.createElement('meta');
-                    meta.name = 'viewport';
-                    document.head.appendChild(meta);
-                }
-                meta.setAttribute('content', 'width=$newWidth, initial-scale=1.0, user-scalable=yes');
-            })();
+        (function() {
+            // Ensure the zoom style element exists
+            var styleId = '__lightbrowse_zoom__';
+            var style = document.getElementById(styleId);
+            if (!style) {
+                style = document.createElement('style');
+                style.id = styleId;
+                document.head.appendChild(style);
+            }
+
+            // Set the zoom via CSS transform
+            style.textContent = 'html { ' +
+                'transform: scale($scale); ' +
+                'transform-origin: 0 0; ' +
+                '-webkit-transform: scale($scale); ' +
+                '-webkit-transform-origin: 0 0; ' +
+                'width: ' + (100 / $scale) + '%; ' +
+                'min-height: ' + (100 / $scale) + 'vh; ' +
+            '}';
+        })();
         """.trimIndent()
 
         webView.evaluateJavascript(js, null)
-
-        // Also adjust textZoom for any text that uses fixed sp/px sizes
-        webView.settings.textZoom = percent
-
         onZoomChanged(currentZoomPercent)
     }
 
-    /**
-     * Smooth zoom animation.
-     */
     private fun animateZoom(from: Int, to: Int) {
         val animator = ValueAnimator.ofFloat(0f, 1f)
         animator.duration = ANIM_DURATION
