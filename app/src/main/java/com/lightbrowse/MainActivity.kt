@@ -80,7 +80,8 @@ class MainActivity : AppCompatActivity() {
                 updateNavButtons()
                 updateUrlBar(view?.url)
 
-                // Restore per-domain zoom (like Chrome)
+                // Force Enable Zoom on this page + restore per-domain zoom
+                zoomManager.onPageLoaded()
                 val savedZoom = zoomPersistence.getZoomForDomain(url)
                 zoomManager.setZoom(savedZoom, animate = false)
             }
