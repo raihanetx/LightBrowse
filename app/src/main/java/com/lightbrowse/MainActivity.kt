@@ -9,18 +9,21 @@ import android.webkit.*
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.lightbrowse.databinding.ActivityMainBinding
-import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private var currentZoomPercent = 100
+    private lateinit var zoomManager: ZoomManager
+    private lateinit var zoomPersistence: ZoomPersistence
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // --- Init Zoom Persistence ---
+        zoomPersistence = ZoomPersistence(this)
 
         // --- WebView Setup (performance-tuned for low-spec devices) ---
         binding.webView.settings.apply {
@@ -33,12 +36,17 @@ class MainActivity : AppCompatActivity() {
             loadsImagesAutomatically = true
             defaultTextEncodingName = "UTF-8"
 
-            // Layout settings — enable text reflow for zoom
+            // Layout settings
             useWideViewPort = true
             loadWithOverviewMode = true
-            builtInZoomControls = false   // We use our own custom controls
+
+            // Zoom: disable built-in overlay controls, keep zoom engine active
+            builtInZoomControls = false
             displayZoomControls = false
             setSupportZoom(true)
+
+            // Text reflow — textZoom will be managed by ZoomManager
+            textZoom = 100
 
             // Reduce memory pressure
             databaseEnabled = true
@@ -48,6 +56,14 @@ class MainActivity : AppCompatActivity() {
 
         // Hardware acceleration
         binding.webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+        // --- Init Zoom Manager ---
+        zoomManager = ZoomManager(this, binding.webView) { zoomPercent ->
+            // Callback: zoom changed → update UI + persist
+            showZoomIndicator(zoomPercent)
+            zoomPersistence.saveZoomForDomain(binding.webView.url, zoomPercent)
+        }
+        zoomManager.attach()
 
         // --- WebView Client ---
         binding.webView.webViewClient = object : WebViewClient() {
@@ -63,8 +79,10 @@ class MainActivity : AppCompatActivity() {
                 binding.progressBar.visibility = View.GONE
                 updateNavButtons()
                 updateUrlBar(view?.url)
-                // Apply current zoom to new page
-                applyZoom(currentZoomPercent)
+
+                // Restore per-domain zoom (like Chrome)
+                val savedZoom = zoomPersistence.getZoomForDomain(url)
+                zoomManager.setZoom(savedZoom, animate = false)
             }
 
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
@@ -115,13 +133,17 @@ class MainActivity : AppCompatActivity() {
             hideKeyboard()
         }
 
-        // --- Zoom Controls (Moto-style) ---
+        // --- Zoom Buttons ---
         binding.btnZoomIn.setOnClickListener {
-            zoomIn()
+            if (!zoomManager.zoomIn()) {
+                Toast.makeText(this, "Max zoom", Toast.LENGTH_SHORT).show()
+            }
         }
 
         binding.btnZoomOut.setOnClickListener {
-            zoomOut()
+            if (!zoomManager.zoomOut()) {
+                Toast.makeText(this, "Min zoom", Toast.LENGTH_SHORT).show()
+            }
         }
 
         // --- Load default page ---
@@ -129,44 +151,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Zoom in — uses WebView's native zoom engine.
-     * Works like Motorola's accessibility zoom:
-     * smooth, incremental, page reflows with text.
+     * Show the zoom indicator overlay.
      */
-    private fun zoomIn() {
-        val didZoom = binding.webView.zoomIn()
-        if (didZoom) {
-            currentZoomPercent = (currentZoomPercent + 20).coerceAtMost(500)
-            showZoomToast()
-        } else {
-            // Already at max zoom
-            Toast.makeText(this, "Max zoom", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    /**
-     * Zoom out — uses WebView's native zoom engine.
-     */
-    private fun zoomOut() {
-        val didZoom = binding.webView.zoomOut()
-        if (didZoom) {
-            currentZoomPercent = (currentZoomPercent - 20).coerceAtLeast(25)
-            showZoomToast()
-        } else {
-            // Already at min zoom
-            Toast.makeText(this, "Min zoom", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    /**
-     * Apply a specific zoom percentage when loading new pages.
-     */
-    private fun applyZoom(percent: Int) {
-        binding.webView.setInitialScale(percent)
-    }
-
-    private fun showZoomToast() {
-        Toast.makeText(this, "${currentZoomPercent}%", Toast.LENGTH_SHORT).show()
+    private fun showZoomIndicator(zoomPercent: Int) {
+        binding.zoomIndicator.showZoomLevel(zoomPercent)
     }
 
     private fun loadUrl(input: String) {

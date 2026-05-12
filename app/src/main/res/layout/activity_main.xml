@@ -146,4 +146,14 @@
 
     </LinearLayout>
 
+    <!-- Zoom Level Indicator (appears on zoom change, auto-fades) -->
+    <com.lightbrowse.ZoomIndicatorView
+        android:id="@+id/zoomIndicator"
+        android:layout_width="80dp"
+        android:layout_height="40dp"
+        app:layout_constraintBottom_toTopOf="@id/zoomControls"
+        app:layout_constraintEnd_toEndOf="@id/zoomControls"
+        app:layout_constraintStart_toStartOf="@id/zoomControls"
+        android:layout_marginBottom="8dp" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>
