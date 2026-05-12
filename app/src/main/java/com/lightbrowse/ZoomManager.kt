@@ -11,12 +11,14 @@ import android.webkit.WebView
 import kotlin.math.roundToInt
 
 /**
- * Professional zoom — works like Chrome's accessibility zoom.
+ * Professional zoom — viewport + CSS zoom (Chrome's actual approach).
  *
- * Uses CSS transform: scale() on the entire page.
- * This magnifies EVERYTHING uniformly — text, images, buttons, layout.
- * No reflow, no black space, no empty areas.
- * Just like looking through a magnifying glass.
+ * How Chrome zoom works on mobile:
+ * 1. Lock viewport width to device width (e.g. 360px)
+ * 2. Apply CSS zoom factor on html element
+ * 3. Browser layout engine treats viewport as (360/zoom)px wide
+ * 4. At 200%: page thinks viewport is 180px → CSS reflows → text wraps bigger
+ * 5. Everything is magnified 2x AND fills the screen — no blank space
  */
 class ZoomManager(
     private val context: Context,
@@ -103,7 +105,6 @@ class ZoomManager(
         if (forceZoomEnabled) {
             webView.evaluateJavascript(FORCE_ENABLE_ZOOM_JS, null)
         }
-        // Apply current zoom to new page
         applyZoom(currentZoomPercent)
     }
 
@@ -134,40 +135,44 @@ class ZoomManager(
     fun getZoom(): Int = currentZoomPercent
 
     /**
-     * Apply zoom using CSS transform: scale().
+     * Apply zoom using viewport width lock + CSS zoom.
      *
-     * This is how Chrome actually zooms on mobile:
-     * - transform: scale() magnifies EVERYTHING uniformly
-     * - transform-origin: 0 0 scales from top-left
-     * - The body is made wider to create a scrollable area
-     * - Page scrolls normally to see the zoomed content
-     *
-     * At zoom 200%, scale = 2.0 → everything looks 2x bigger
-     * At zoom 50%, scale = 0.5 → everything looks half size
+     * This is Chrome's actual zoom mechanism:
+     * - Viewport meta sets width=device-width (locks to screen width)
+     * - CSS zoom on html element scales everything
+     * - Layout engine reflows content at the zoomed scale
+     * - No blank space — content fills the screen naturally
      */
     private fun applyZoom(percent: Int) {
         val scale = percent / 100.0
 
         val js = """
         (function() {
-            // Ensure the zoom style element exists
-            var styleId = '__lightbrowse_zoom__';
-            var style = document.getElementById(styleId);
-            if (!style) {
-                style = document.createElement('style');
-                style.id = styleId;
-                document.head.appendChild(style);
+            // Step 1: Lock viewport to device width
+            var meta = document.querySelector('meta[name="viewport"]');
+            if (!meta) {
+                meta = document.createElement('meta');
+                meta.name = 'viewport';
+                document.head.appendChild(meta);
             }
+            meta.setAttribute('content', 'width=device-width, initial-scale=1.0, user-scalable=yes');
 
-            // Set the zoom via CSS transform
-            style.textContent = 'html { ' +
-                'transform: scale($scale); ' +
-                'transform-origin: 0 0; ' +
-                '-webkit-transform: scale($scale); ' +
-                '-webkit-transform-origin: 0 0; ' +
-                'width: ' + (100 / $scale) + '%; ' +
-                'min-height: ' + (100 / $scale) + 'vh; ' +
-            '}';
+            // Step 2: Apply CSS zoom on html element
+            // This makes the browser layout engine treat the viewport as smaller,
+            // causing all responsive CSS to reflow at the zoomed scale.
+            // Everything gets magnified AND fills the screen.
+            var html = document.documentElement;
+            html.style.zoom = '$scale';
+            html.style.width = '100%';
+            html.style.maxWidth = '100%';
+
+            // Step 3: Ensure body fills the zoomed viewport
+            if (document.body) {
+                document.body.style.width = '100%';
+                document.body.style.maxWidth = '100%';
+                document.body.style.margin = '0';
+                document.body.style.padding = '0';
+            }
         })();
         """.trimIndent()
 
